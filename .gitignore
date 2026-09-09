@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+*.egg-info/
+
+# 환경 변수 (절대 커밋 금지)
+.env
+
+# 이미지 캡처
+edge/captured/
+backend/static/images/
+
+# IDE
+.vscode/
+.idea/
+
+# 로그
+*.log
+local_log.txt
