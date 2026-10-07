@@ -20,3 +20,6 @@ backend/static/images/
 # 로그
 *.log
 local_log.txt
+
+# JavaScript test dependencies
+node_modules/

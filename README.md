@@ -5,7 +5,7 @@
 **Jetson Orin Nano 기반 우편함 AI 감지 + 웹 관리 시스템 + Telegram 알림 자동화**
 
 ![Python](https://img.shields.io/badge/Python-3.10-blue?logo=python)
-![Flask](https://img.shields.io/badge/Flask-2.x-black?logo=flask)
+![Flask](https://img.shields.io/badge/Flask-3.0.3-black?logo=flask)
 ![PostgreSQL](https://img.shields.io/badge/PostgreSQL-15-336791?logo=postgresql)
 ![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?logo=docker)
 ![YOLO](https://img.shields.io/badge/YOLO-v8-FF4B4B)
@@ -13,6 +13,25 @@
 ![Telegram](https://img.shields.io/badge/Telegram-Bot-26A5E4?logo=telegram)
 
 </div>
+
+Jetson에서 촬영한 이미지를 분석하고, 감지 기록을 웹 대시보드에서 확인하는
+스마트 우편함 프로젝트입니다. Flask·PostgreSQL 백엔드와 Telegram 알림 연동 코드를 포함합니다.
+
+## 현재 상태 · 2026-10-07
+
+| 항목 | 이번 반영 내용 |
+|---|---|
+| Edge 감지 모듈 | Python 문법 오류 복구, 환경변수 설정, import 시 장치 접근 방지 |
+| 시뮬레이션 | JPEG 입력으로 장치·네트워크 없이 실행, 명시적으로 선택한 경우에만 테스트 업로드 |
+| 대시보드 | JavaScript 문법 오류 복구, 안전한 DOM 렌더링, 이미지 URL 제한·실패 대체 표시, 신뢰도 0% 표시 |
+| 검증 | Python 테스트 12개 + DOM 테스트 8개 통과, Python·JavaScript 문법 검사 통과 |
+
+**검증 범위:** 실제 Jetson·카메라·외부 서비스 연동은 미검증입니다.
+Chromium 다운로드 실패로 실제 브라우저 검증도 남아 있습니다.
+Docker·정적 파일 경로, 인증, 우편물 판정 정확도와 전송 재시도는 후속 개선 항목입니다.
+
+실행 방법과 검증 상세는 [Edge 가이드](docs/edge-runtime.md)와
+[대시보드 가이드](docs/dashboard-repair.md)를 참고하세요.
 
 ---
 
@@ -169,10 +188,19 @@ docker-compose -f docker/docker-compose.yml up -d
 
 ### 4. Jetson에서 감지 모듈 실행
 
+저장소 루트에서 Edge 환경변수를 설정한 뒤 실행합니다.
+
 ```bash
-cd edge
-python detector.py
+cp edge/.env.example edge/.env
+# edge/.env 수정 후 (POSIX shell):
+set -a
+. edge/.env
+set +a
+python edge/detector.py
 ```
+
+오프라인 시뮬레이션, 장치 의존성 및 검증 범위는
+[Edge 실행 가이드](docs/edge-runtime.md)를 참고하세요.
 
 ### 5. 웹 대시보드 확인
 
@@ -212,3 +240,11 @@ MIT License
 **오석환**  
 Frontend / Edge AI / Embedded Developer  
 GitHub: [dhtjr1236-eng](https://github.com/dhtjr1236-eng)
+
+## 감지 모듈·대시보드 복구 검증
+
+- [Edge 실행·시뮬레이션 가이드](docs/edge-runtime.md)
+- [대시보드 수정 내용·테스트·미검증 범위](docs/dashboard-repair.md)
+
+장치 없는 Python 테스트 12개와 대시보드 DOM 테스트 8개를 제공하며,
+실제 Jetson 및 브라우저 검증 여부는 위 가이드에 구분하여 기록합니다.

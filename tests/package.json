@@ -1,0 +1,12 @@
+{
+  "name": "smart-mailbox-dashboard-tests",
+  "private": true,
+  "scripts": {
+    "test": "node --test dashboard.dom.test.cjs",
+    "test:browser": "node --test dashboard.test.cjs"
+  },
+  "devDependencies": {
+    "jsdom": "26.1.0",
+    "playwright": "1.62.1"
+  }
+}
