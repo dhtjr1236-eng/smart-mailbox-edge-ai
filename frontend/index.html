@@ -14,8 +14,8 @@
         <span>Smart Mailbox</span>
       </div>
       <nav>
-        <button onclick="filterAll()" class="nav-btn active" id="btn-all">전체</button>
-        <button onclick="filterDetected()" class="nav-btn" id="btn-detected">감지만</button>
+        <button class="nav-btn active" id="btn-all">전체</button>
+        <button class="nav-btn" id="btn-detected">감지만</button>
       </nav>
       <button class="theme-toggle" data-theme-toggle aria-label="테마 전환">🌙</button>
     </div>
@@ -27,22 +27,23 @@
       <div class="stat-card"><span class="stat-label">오늘</span><span class="stat-value" id="today-count">-</span></div>
     </section>
     <section class="controls">
-      <input type="date" id="date-filter" onchange="applyDateFilter()" />
-      <button onclick="refreshData()" class="btn-refresh">🔄 새로고침</button>
+      <input type="date" id="date-filter" />
+      <button class="btn-refresh" id="btn-refresh">🔄 새로고침</button>
     </section>
     <section class="records-grid" id="records-grid">
       <div class="loading">데이터 불러오는 중...</div>
     </section>
     <div class="pagination">
-      <button id="btn-prev" onclick="prevPage()" disabled>이전</button>
+      <button id="btn-prev" disabled>이전</button>
       <span id="page-info">1 페이지</span>
-      <button id="btn-next" onclick="nextPage()">다음</button>
+      <button id="btn-next">다음</button>
     </div>
   </main>
-  <div class="modal" id="image-modal" onclick="closeModal()">
-    <div class="modal-inner" onclick="event.stopPropagation()">
-      <button class="modal-close" onclick="closeModal()">✕</button>
+  <div class="modal" id="image-modal">
+    <div class="modal-inner">
+      <button class="modal-close">✕</button>
       <img id="modal-img" src="" alt="감지 이미지" />
+      <p id="modal-image-fallback" hidden>📷 이미지를 불러올 수 없습니다.</p>
       <p id="modal-desc"></p>
     </div>
   </div>

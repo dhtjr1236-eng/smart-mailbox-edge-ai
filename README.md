@@ -221,3 +221,11 @@ MIT License
 **오석환**  
 Frontend / Edge AI / Embedded Developer  
 GitHub: [dhtjr1236-eng](https://github.com/dhtjr1236-eng)
+
+## 감지 모듈·대시보드 복구 검증
+
+- [Edge 실행·시뮬레이션 가이드](docs/edge-runtime.md)
+- [대시보드 수정 내용·테스트·미검증 범위](docs/dashboard-repair.md)
+
+장치 없는 Python 테스트 12개와 대시보드 DOM 테스트 8개를 제공하며,
+실제 Jetson 및 브라우저 검증 여부는 위 가이드에 구분하여 기록합니다.
