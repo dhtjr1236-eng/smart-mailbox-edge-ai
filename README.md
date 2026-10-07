@@ -169,10 +169,19 @@ docker-compose -f docker/docker-compose.yml up -d
 
 ### 4. Jetson에서 감지 모듈 실행
 
+저장소 루트에서 Edge 환경변수를 설정한 뒤 실행합니다.
+
 ```bash
-cd edge
-python detector.py
+cp edge/.env.example edge/.env
+# edge/.env 수정 후 (POSIX shell):
+set -a
+. edge/.env
+set +a
+python edge/detector.py
 ```
+
+오프라인 시뮬레이션, 장치 의존성 및 검증 범위는
+[Edge 실행 가이드](docs/edge-runtime.md)를 참고하세요.
 
 ### 5. 웹 대시보드 확인
 

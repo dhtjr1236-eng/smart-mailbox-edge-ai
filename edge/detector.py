@@ -1,1 +1,209 @@
-"""\ndetector.py\nJetson Orin Nano에서 실행되는 우편함 감지 메인 모듈\n- 자기 센서 신호 감지 (GPIO 시뮬레이션 포함)\n- 카메라 촬영\n- YOLO v8 감지\n- Gemini Vision API 분석 (선택)\n- Flask 서버로 결과 전송\n"""\n\nimport cv2\nimport time\nimport logging\nimport requests\nfrom datetime import datetime\nfrom pathlib import Path\nfrom ultralytics import YOLO\n\n# Jetson 환경에서는 Jetson.GPIO, 개발/테스트 환경에서는 시뮬레이션\ntry:\n    import Jetson.GPIO as GPIO\n    JETSON_MODE = True\nexcept ImportError:\n    JETSON_MODE = False\n    print("[WARNING] Jetson.GPIO not found. Running in simulation mode.")\n\n# Gemini API (선택적 사용)\ntry:\n    import google.generativeai as genai\n    GEMINI_AVAILABLE = True\nexcept ImportError:\n    GEMINI_AVAILABLE = False\n\n# ─── 설정 ────────────────────────────────────────────────\nSERVER_URL = "http://192.168.0.100:5000"   # Flask 서버 IP\nSENSOR_PIN = 11                             # 자기 센서 GPIO 핀\nYOLO_MODEL_PATH = "yolov8n.pt"\nCONFIDENCE_THRESHOLD = 0.5\nGEMINI_API_KEY = ""                        # .env에서 관리 권장\nCAMERA_INDEX = 0\nSAVE_DIR = Path("./captured")\nSAVE_DIR.mkdir(exist_ok=True)\n\nlogging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")\nlogger = logging.getLogger(__name__)\n\n# ─── 모델 초기화 ──────────────────────────────────────────\nlogger.info("YOLO 모델 로딩 중...")\nmodel = YOLO(YOLO_MODEL_PATH)\nlogger.info("YOLO 모델 로드 완료")\n\nif GEMINI_AVAILABLE and GEMINI_API_KEY:\n    genai.configure(api_key=GEMINI_API_KEY)\n    gemini_model = genai.GenerativeModel("gemini-1.5-flash")\n    logger.info("Gemini Vision API 초기화 완료")\n\n# ─── GPIO 초기화 ──────────────────────────────────────────\nif JETSON_MODE:\n    GPIO.setmode(GPIO.BOARD)\n    GPIO.setup(SENSOR_PIN, GPIO.IN)\n    logger.info(f"GPIO 핀 {SENSOR_PIN} 입력 설정 완료")\n\n\ndef capture_image() -> str:\n    """카메라로 이미지 촬영 후 파일 경로 반환"""\n    cap = cv2.VideoCapture(CAMERA_INDEX)\n    if not cap.isOpened():\n        raise RuntimeError("카메라를 열 수 없습니다.")\n    ret, frame = cap.read()\n    cap.release()\n    if not ret:\n        raise RuntimeError("이미지 캡처 실패")\n    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")\n    path = str(SAVE_DIR / f"capture_{timestamp}.jpg")\n    cv2.imwrite(path, frame)\n    logger.info(f"이미지 저장: {path}")\n    return path\n\n\ndef run_yolo(image_path: str) -> dict:\n    """YOLO v8로 객체 감지 후 결과 반환"""\n    results = model(image_path, conf=CONFIDENCE_THRESHOLD)\n    detected = False\n    confidence = 0.0\n    label = ""\n    for r in results:\n        for box in r.boxes:\n            cls_name = model.names[int(box.cls)]\n            conf = float(box.conf)\n            if conf > confidence:\n                confidence = conf\n                label = cls_name\n                detected = True\n    return {"detected": detected, "confidence": confidence, "label": label}\n\n\ndef run_gemini(image_path: str) -> str:\n    """Gemini Vision API로 이미지 문맥 분석"""\n    if not GEMINI_AVAILABLE or not GEMINI_API_KEY:\n        return ""\n    try:\n        with open(image_path, "rb") as f:\n            image_data = f.read()\n        response = gemini_model.generate_content([\n            "이 우편함 내부 이미지를 분석해서 우편물이 있는지, 있다면 어떤 종류인지 한 문장으로 설명해줘.",\n            {"mime_type": "image/jpeg", "data": image_data}\n        ])\n        return response.text.strip()\n    except Exception as e:\n        logger.warning(f"Gemini API 오류: {e}")\n        return ""\n\n\ndef send_to_server(image_path: str, yolo_result: dict, gemini_result: str):\n    """Flask 서버로 이미지 + 감지 결과 전송"""\n    timestamp = datetime.now().isoformat()\n    try:\n        with open(image_path, "rb") as img_file:\n            response = requests.post(\n                f"{SERVER_URL}/api/detections",\n                files={"image": img_file},\n                data={\n                    "detected": str(yolo_result["detected"]).lower(),\n                    "confidence": yolo_result["confidence"],\n                    "label": yolo_result["label"],\n                    "gemini_result": gemini_result,\n                    "timestamp": timestamp,\n                },\n                timeout=10\n            )\n        if response.status_code == 200:\n            logger.info(f"서버 전송 성공: {response.json()}")\n        else:\n            logger.error(f"서버 전송 실패: {response.status_code}")\n    except requests.exceptions.ConnectionError:\n        logger.error("Flask 서버에 연결할 수 없습니다. 로컬 로그에 기록합니다.")\n        with open("local_log.txt", "a") as f:\n            f.write(f"{timestamp} | {yolo_result} | {gemini_result}\n")\n\n\ndef on_sensor_triggered():\n    """센서 감지 시 실행되는 메인 파이프라인"""\n    logger.info("=== 우편함 개폐 감지됨! 파이프라인 시작 ===")\n    try:\n        image_path = capture_image()\n        yolo_result = run_yolo(image_path)\n        logger.info(f"YOLO 결과: {yolo_result}")\n        gemini_result = ""\n        if yolo_result["confidence"] < 0.7:\n            logger.info("신뢰도 낮음 → Gemini 정밀 분석 실행")\n            gemini_result = run_gemini(image_path)\n            logger.info(f"Gemini 결과: {gemini_result}")\n        send_to_server(image_path, yolo_result, gemini_result)\n    except Exception as e:\n        logger.error(f"파이프라인 오류: {e}")\n\n\ndef main():\n    logger.info("스마트 우편함 감지 시스템 시작")\n    if JETSON_MODE:\n        logger.info("실제 GPIO 모드로 동작 중...")\n        try:\n            while True:\n                sensor_value = GPIO.input(SENSOR_PIN)\n                if sensor_value == GPIO.HIGH:\n                    on_sensor_triggered()\n                    time.sleep(5)\n                time.sleep(0.1)\n        except KeyboardInterrupt:\n            logger.info("종료 신호 수신")\n        finally:\n            GPIO.cleanup()\n    else:\n        logger.info("시뮬레이션 모드: 10초마다 감지 이벤트 발생")\n        while True:\n            on_sensor_triggered()\n            time.sleep(10)\n\n\nif __name__ == "__main__":\n    main()\n
+"""Mailbox capture/detection pipeline; importing this module never opens hardware."""
+from __future__ import annotations
+
+import argparse
+import logging
+import math
+import os
+import time
+import uuid
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from pathlib import Path
+from urllib.parse import urlsplit
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class Config:
+    server_url: str = "http://localhost:5000"
+    sensor_pin: int = 11
+    camera: int | str = 0
+    model_path: str = "yolov8n.pt"
+    confidence: float = 0.5
+    gemini_key: str = ""
+    gemini_model: str = "gemini-1.5-flash"
+    save_dir: Path = Path(__file__).resolve().parent / "captured"
+    timeout: float = 10.0
+
+    @classmethod
+    def from_env(cls, env=None):
+        env = os.environ if env is None else env
+        camera = env.get("MAILBOX_CAMERA", "0")
+        config = cls(
+            server_url=env.get("MAILBOX_SERVER_URL", cls.server_url).rstrip("/"),
+            sensor_pin=int(env.get("MAILBOX_SENSOR_PIN", "11")),
+            camera=int(camera) if camera.isdecimal() else camera,
+            model_path=env.get("MAILBOX_MODEL_PATH", cls.model_path),
+            confidence=float(env.get("MAILBOX_CONFIDENCE", "0.5")),
+            gemini_key=env.get("GEMINI_API_KEY", ""),
+            gemini_model=env.get("MAILBOX_GEMINI_MODEL", cls.gemini_model),
+            save_dir=Path(env.get("MAILBOX_SAVE_DIR", str(cls.save_dir))),
+            timeout=float(env.get("MAILBOX_TIMEOUT", "10")),
+        )
+        url = urlsplit(config.server_url)
+        if url.scheme not in {"http", "https"} or not url.netloc or url.username or url.password or url.query or url.fragment:
+            raise ValueError("MAILBOX_SERVER_URL must be an HTTP(S) base URL without credentials/query/fragment")
+        if config.sensor_pin <= 0 or (isinstance(config.camera, int) and config.camera < 0):
+            raise ValueError("Invalid GPIO pin or camera index")
+        if not math.isfinite(config.confidence) or not 0 <= config.confidence <= 1:
+            raise ValueError("MAILBOX_CONFIDENCE must be between 0 and 1")
+        if not math.isfinite(config.timeout) or config.timeout <= 0:
+            raise ValueError("MAILBOX_TIMEOUT must be positive")
+        return config
+
+
+def capture_image(config, cv2_module):
+    config.save_dir.mkdir(parents=True, exist_ok=True)
+    cap = cv2_module.VideoCapture(config.camera)
+    try:
+        if not cap.isOpened():
+            raise RuntimeError("카메라를 열 수 없습니다.")
+        ok, frame = cap.read()
+        if not ok:
+            raise RuntimeError("이미지 캡처 실패")
+    finally:
+        cap.release()
+    path = config.save_dir / f"capture_{uuid.uuid4().hex}.jpg"
+    if not cv2_module.imwrite(str(path), frame):
+        raise RuntimeError("이미지 저장 실패")
+    return path
+
+
+def run_yolo(image_path, model, threshold):
+    # Preserve the existing highest-confidence object selection. Mail-specific
+    # classification/model training is a separate, not-yet-implemented task.
+    result = {"detected": False, "confidence": 0.0, "label": ""}
+    for prediction in model(str(image_path), conf=threshold):
+        for box in prediction.boxes:
+            confidence = float(box.conf)
+            if confidence > result["confidence"]:
+                result = {"detected": True, "confidence": confidence,
+                          "label": model.names[int(box.cls)]}
+    return result
+
+
+def run_gemini(image_path, model):
+    if model is None:
+        return ""
+    try:
+        response = model.generate_content([
+            "이 우편함 내부 이미지를 분석해서 우편물이 있는지, 있다면 어떤 종류인지 한 문장으로 설명해줘.",
+            {"mime_type": "image/jpeg", "data": Path(image_path).read_bytes()},
+        ])
+        return response.text.strip()
+    except Exception:
+        logger.warning("Gemini 분석 실패; 기본 감지 결과로 계속 진행합니다.")
+        return ""
+
+
+def send_to_server(image_path, result, analysis, config, http):
+    with Path(image_path).open("rb") as image:
+        response = http.post(
+            f"{config.server_url}/api/detections",
+            files={"image": (Path(image_path).name, image, "image/jpeg")},
+            data={"detected": str(result["detected"]).lower(),
+                  "confidence": result["confidence"], "label": result["label"],
+                  "gemini_result": analysis,
+                  "timestamp": datetime.now(timezone.utc).isoformat()},
+            timeout=config.timeout,
+        )
+        response.raise_for_status()
+        return response.json()
+
+
+class Pipeline:
+    def __init__(self, capture, detect, analyze, send):
+        self.capture, self.detect, self.analyze, self.send = capture, detect, analyze, send
+
+    def run(self):
+        path = self.capture()
+        result = self.detect(path)
+        analysis = self.analyze(path) if result["confidence"] < 0.7 else ""
+        return self.send(path, result, analysis)
+
+
+def build_pipeline(config):
+    # Optional device dependencies are loaded only for real execution.
+    import cv2
+    import requests
+    from ultralytics import YOLO
+
+    model = YOLO(config.model_path)
+    gemini = None
+    if config.gemini_key:
+        import google.generativeai as genai
+        genai.configure(api_key=config.gemini_key)
+        gemini = genai.GenerativeModel(config.gemini_model)
+    return Pipeline(
+        lambda: capture_image(config, cv2),
+        lambda path: run_yolo(path, model, config.confidence),
+        lambda path: run_gemini(path, gemini),
+        lambda path, result, analysis: send_to_server(path, result, analysis, config, requests),
+    )
+
+
+def simulation_pipeline(config, image_path, send=False):
+    """Use a supplied JPEG and a labelled fake result; no camera/GPIO/YOLO."""
+    if not image_path.is_file():
+        raise ValueError("Simulation requires an existing JPEG supplied with --image")
+    if image_path.read_bytes()[:3] != b"\xff\xd8\xff":
+        raise ValueError("--image must be a JPEG file")
+
+    def deliver(path, result, analysis):
+        if send:
+            import requests
+            return send_to_server(path, result, analysis, config, requests)
+        logger.info("SIMULATION: capture=%s result=%s (no network request)", path, result)
+        return {"status": "simulated", "result": result}
+
+    return Pipeline(lambda: image_path,
+                    lambda _: {"detected": True, "confidence": 0.6, "label": "simulation"},
+                    lambda _: "SIMULATION: 실제 AI 분석 결과가 아닙니다.", deliver)
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--simulate", action="store_true", help="explicit offline simulation")
+    parser.add_argument("--image", type=Path, help="JPEG fixture for simulation")
+    parser.add_argument("--send", action="store_true", help="allow simulation to upload a test record")
+    parser.add_argument("--once", action="store_true", help="run one capture without GPIO polling")
+    args = parser.parse_args(argv)
+    if args.simulate and args.image is None:
+        parser.error("--simulate requires --image path/to/test.jpg")
+    if not args.simulate and (args.image is not None or args.send):
+        parser.error("--image and --send are simulation-only options")
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+    gpio = None
+    try:
+        config = Config.from_env()
+        if not args.simulate and not args.once:
+            import Jetson.GPIO as gpio
+            gpio.setmode(gpio.BOARD)
+            gpio.setup(config.sensor_pin, gpio.IN)
+        pipeline = (simulation_pipeline(config, args.image, args.send)
+                    if args.simulate else build_pipeline(config))
+        if args.once:
+            pipeline.run()
+            return 0
+        while True:
+            if args.simulate or gpio.input(config.sensor_pin) == gpio.HIGH:
+                try:
+                    pipeline.run()
+                except Exception as exc:
+                    logger.error("파이프라인 실패 (%s); 다음 이벤트를 기다립니다.", type(exc).__name__)
+                time.sleep(10 if args.simulate else 5)
+            time.sleep(0.1)
+    except KeyboardInterrupt:
+        return 0
+    except Exception as exc:
+        logger.error("실행 실패 (%s). 설정·의존성·장치를 확인하세요.", type(exc).__name__)
+        return 1
+    finally:
+        if gpio is not None:
+            gpio.cleanup()
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
